@@ -1,0 +1,16 @@
+# render.yaml — Render.com Blueprint (one-click deploy)
+# Push this file to your GitHub repo → connect on render.com → Deploy
+
+services:
+  - type: web
+    name: streamadda
+    runtime: docker
+    plan: free                  # Render free tier
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true     # Render auto-generates a random secret
+      - key: PORT
+        value: 8000
+    healthCheckPath: /api/health
+    autoDeploy: true
