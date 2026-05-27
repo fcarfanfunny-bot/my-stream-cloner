@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>StreamAdda — Live Stream Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['Syne', 'sans-serif'],
+            mono:    ['JetBrains Mono', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    :root {
+      --red:    #ff3c3c;
+      --orange: #ff6b35;
+      --s900:   #0a0a0f;
+      --s800:   #111118;
+      --s700:   #18181f;
+      --s600:   #22222d;
+      --s500:   #2c2c3a;
+    }
+    html, body {
+      background: var(--s900);
+      color: #e2e2f0;
+      font-family: 'Syne', sans-serif;
+      min-height: 100vh;
+    }
+    /* scanlines */
+    body::before {
+      content:''; position:fixed; inset:0; pointer-events:none; z-index:9999;
+      background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px);
+    }
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(255,60,60,0.04) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(255,60,60,0.04) 1px,transparent 1px);
+      background-size: 40px 40px;
+    }
+    /* Fields */
+    .field {
+      background: var(--s600); border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 8px; color: #e2e2f0; font-family: 'Syne',sans-serif;
+      font-size: .875rem; padding: .625rem .875rem; width: 100%;
+      transition: border-color .2s, box-shadow .2s; outline: none;
+    }
+    .field:focus { border-color:rgba(255,60,60,.6); box-shadow:0 0 0 3px rgba(255,60,60,.12); }
+    .field::placeholder { color:rgba(255,255,255,.25); }
+    select.field option { background: var(--s700); }
+
+    /* Buttons */
+    .btn-red {
+      background: linear-gradient(135deg,#ff3c3c,#ff6b35);
+      color:#fff; font-family:'Syne',sans-serif; font-weight:700;
+      letter-spacing:.04em; border:none; border-radius:10px;
+      padding:.7rem 1.5rem; cursor:pointer;
+      transition:opacity .2s,transform .15s,box-shadow .2s;
+      box-shadow:0 4px 20px rgba(255,60,60,.4);
+    }
+    .btn-red:hover:not(:disabled) { opacity:.9; transform:translateY(-1px); }
+    .btn-red:active:not(:disabled){ transform:translateY(0); }
+    .btn-red:disabled { opacity:.4; cursor:not-allowed; }
+
+    .btn-stop {
+      background:rgba(255,60,60,.1); color:#ff6060;
+      border:1px solid rgba(255,60,60,.3); font-family:'Syne',sans-serif;
+      font-weight:600; border-radius:8px; padding:.5rem 1rem;
+      cursor:pointer; transition:background .2s,box-shadow .2s;
+    }
+    .btn-stop:hover { background:rgba(255,60,60,.22); box-shadow:0 0 12px rgba(255,60,60,.25); }
+
+    .btn-ghost {
+      background:var(--s600); color:rgba(255,255,255,.6);
+      border:1px solid rgba(255,255,255,.08); font-family:'Syne',sans-serif;
+      font-size:.8rem; font-weight:600; border-radius:8px;
+      padding:.5rem 1rem; cursor:pointer; transition:background .2s,color .2s;
+    }
+    .btn-ghost:hover { background:var(--s500); color:#e2e2f0; }
+
+    .btn-del {
+      background:transparent; color:rgba(255,255,255,.3);
+      border:1px solid rgba(255,255,255,.1); font-family:'JetBrains Mono',monospace;
+      font-size:.75rem; border-radius:6px; padding:.35rem .6rem;
+      cursor:pointer; transition:color .2s,border-color .2s;
+    }
+    .btn-del:hover { color:#ff6060; border-color:rgba(255,60,60,.4); }
+
+    /* Upload drop zone */
+    .dropzone {
+      border: 2px dashed rgba(255,60,60,.3);
+      border-radius: 12px;
+      background: rgba(255,60,60,.04);
+      padding: 1.5rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    .dropzone:hover, .dropzone.drag { border-color:rgba(255,60,60,.7); background:rgba(255,60,60,.09); }
+    .dropzone input[type=file] {
+      position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%;
+    }
+    /* Progress bar */
+    .prog-wrap { height:6px; background:var(--s500); border-radius:999px; overflow:hidden; }
+    .prog-bar   { height:100%; background:linear-gradient(90deg,#ff3c3c,#ff6b35);
+                  border-radius:999px; transition:width .25s; width:0%; }
+
+    /* Log terminal */
+    .log-terminal {
+      background:#05050a; border:1px solid rgba(255,255,255,.07); border-radius:8px;
+      font-family:'JetBrains Mono',monospace; font-size:.68rem; line-height:1.6;
+      color:#a0ffa0; padding:.75rem; height:160px;
+      overflow-y:auto; overflow-x:hidden; word-break:break-all;
+    }
+    .log-terminal::-webkit-scrollbar { width:4px; }
+    .log-terminal::-webkit-scrollbar-thumb { background:rgba(255,60,60,.4); border-radius:4px; }
+
+    /* Status badges */
+    .badge-on  { background:rgba(34,197,94,.12); color:#4ade80; border:1px solid rgba(34,197,94,.3); }
+    .badge-off { background:rgba(255,60,60,.08); color:#ff6060; border:1px solid rgba(255,60,60,.2); }
+
+    .dot-on  { background:#4ade80; box-shadow:0 0 8px #4ade80;
+               animation:pulse-g 2s infinite; }
+    .dot-off { background:#ff6060; }
+
+    @keyframes pulse-g {
+      0%,100% { opacity:1; box-shadow:0 0 6px #4ade80; }
+      50%      { opacity:.6; box-shadow:0 0 16px rgba(74,222,128,.4); }
+    }
+
+    /* Card */
+    .scard {
+      background:var(--s800); border:1px solid rgba(255,255,255,.06);
+      border-radius:16px; box-shadow:0 4px 32px rgba(0,0,0,.5);
+      animation:fadein .35s ease;
+    }
+    .scard.online { border-color:rgba(74,222,128,.2); }
+    @keyframes fadein { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:none} }
+
+    /* Toggle */
+    .tgl-wrap { display:inline-flex; align-items:center; gap:.5rem; cursor:pointer; }
+    .tgl-in   { position:absolute; opacity:0; width:0; height:0; }
+    .tgl-track{
+      width:40px; height:22px; background:var(--s500); border-radius:999px;
+      border:1px solid rgba(255,255,255,.1); transition:background .2s; flex-shrink:0;
+      position:relative;
+    }
+    .tgl-thumb{
+      position:absolute; left:3px; top:50%; transform:translateY(-50%);
+      width:16px; height:16px; background:#fff; border-radius:50%;
+      transition:left .2s;
+    }
+    .tgl-in:checked ~ .tgl-track { background:linear-gradient(135deg,#ff3c3c,#ff6b35); }
+    .tgl-in:checked ~ .tgl-track .tgl-thumb { left:21px; }
+
+    /* Live chip */
+    .live-chip {
+      display:inline-flex; align-items:center; gap:6px;
+      background:rgba(255,60,60,.12); border:1px solid rgba(255,60,60,.3);
+      border-radius:999px; padding:4px 12px;
+      font-family:'JetBrains Mono',monospace; font-size:.68rem;
+      letter-spacing:.08em; color:#ff8080;
+    }
+    .live-dot { width:7px; height:7px; background:var(--red); border-radius:50%;
+                box-shadow:0 0 8px var(--red); animation:pulse-g 1.5s infinite; }
+
+    /* Health pill */
+    .h-pill {
+      display:inline-flex; align-items:center; gap:6px;
+      background:var(--s700); border:1px solid rgba(255,255,255,.07);
+      border-radius:999px; padding:4px 10px;
+      font-family:'JetBrains Mono',monospace; font-size:.68rem;
+      color:rgba(255,255,255,.5);
+    }
+
+    /* Toast */
+    #toasts { position:fixed; bottom:1.5rem; right:1rem; z-index:10000;
+              display:flex; flex-direction:column; gap:.5rem; align-items:flex-end; }
+    .toast {
+      background:var(--s600); border:1px solid rgba(255,255,255,.1);
+      border-radius:10px; padding:.65rem 1rem; font-size:.78rem;
+      font-family:'JetBrains Mono',monospace; color:#e2e2f0;
+      max-width:280px; box-shadow:0 8px 24px rgba(0,0,0,.5);
+      animation:fadein .3s ease;
+    }
+    .toast.ok  { border-color:rgba(74,222,128,.35); color:#86efac; }
+    .toast.err { border-color:rgba(255,60,60,.35);  color:#fca5a5; }
+    .toast.inf { border-color:rgba(96,165,250,.35); color:#93c5fd; }
+
+    /* Modal scroll */
+    #modal-box { scrollbar-width:thin; }
+    @supports (padding:env(safe-area-inset-bottom)) {
+      .safe-bot { padding-bottom:env(safe-area-inset-bottom); }
+    }
+
+    /* Uptime font */
+    .uptime { font-family:'JetBrains Mono',monospace; font-size:.78rem; }
+
+    /* Meta pill */
+    .mpill {
+      padding:.2rem .55rem; border-radius:5px;
+      font-family:'JetBrains Mono',monospace; font-size:.68rem;
+      background:var(--s600); color:rgba(255,255,255,.4);
+    }
+    hr.rule { border:none; border-top:1px solid rgba(255,255,255,.06); }
+  </style>
+</head>
+<body class="grid-bg min-h-screen">
+<div id="toasts"></div>
+
+<!-- ── Navbar ────────────────────────────────────────────────────────────── -->
+<nav class="sticky top-0 z-50 border-b border-white/5"
+     style="background:rgba(10,10,15,.9);backdrop-filter:blur(16px);">
+  <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+           style="background:linear-gradient(135deg,#ff3c3c,#ff6b35);box-shadow:0 4px 16px rgba(255,60,60,.4);">
+        <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="font-display font-extrabold text-white text-base leading-tight">StreamAdda</div>
+        <div class="font-mono text-white/30" style="font-size:.58rem;letter-spacing:.1em;">BROADCAST CONTROL v2</div>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <div id="hpill" class="h-pill hidden sm:flex">
+        <svg id="hdot" class="w-2 h-2 text-gray-500" fill="currentColor" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4"/></svg>
+        <span id="htext">checking…</span>
+      </div>
+      <div id="livechip" class="live-chip hidden">
+        <span class="live-dot"></span>
+        <span id="livecount">0</span> LIVE
+      </div>
+      <button onclick="openModal()" class="btn-red text-sm px-3 py-2 flex items-center gap-1.5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+        </svg>
+        <span class="hidden sm:inline">New Stream</span>
+      </button>
+    </div>
+
+  </div>
+</nav>
+
+<!-- ── Main ──────────────────────────────────────────────────────────────── -->
+<main class="max-w-5xl mx-auto px-4 py-6 pb-24">
+
+  <!-- Empty state -->
+  <div id="empty" class="text-center py-20">
+    <div class="w-20 h-20 mx-auto mb-6 rounded-2xl flex items-center justify-center"
+         style="background:rgba(255,60,60,.08);border:2px dashed rgba(255,60,60,.25);">
+      <svg class="w-9 h-9" style="color:rgba(255,60,60,.45);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.361a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+      </svg>
+    </div>
+    <h2 class="font-display font-bold text-xl text-white mb-2">কোনো Stream নেই</h2>
+    <p class="text-sm mb-6 text-white/40 max-w-xs mx-auto">
+      "New Stream" বাটন চাপুন, ভিডিও আপলোড করুন এবং স্ট্রিম শুরু করুন।
+    </p>
+    <button onclick="openModal()" class="btn-red px-6 py-3">প্রথম Stream শুরু করুন</button>
+  </div>
+
+  <!-- Streams grid -->
+  <div id="grid" class="grid gap-4 grid-cols-1 md:grid-cols-2 hidden"></div>
+
+</main>
+
+<!-- ── Modal ─────────────────────────────────────────────────────────────── -->
+<div id="overlay" class="fixed inset-0 z-[200] flex items-end sm:items-center justify-center hidden"
+     style="background:rgba(0,0,0,.72);backdrop-filter:blur(6px);"
+     onclick="maybeClose(event)">
+  <div id="modal-box"
+       class="w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl overflow-y-auto safe-bot"
+       style="background:var(--s800);border:1px solid rgba(255,255,255,.08);max-height:94vh;"
+       onclick="event.stopPropagation()">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between px-5 pt-5 pb-4 border-b border-white/5">
+      <h2 class="font-display font-bold text-lg text-white">নতুন Stream কনফিগার করুন</h2>
+      <button onclick="closeModal()"
+              class="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white/80"
+              style="background:var(--s600);">✕</button>
+    </div>
+
+    <div class="px-5 py-4 space-y-4">
+
+      <!-- Stream Name -->
+      <div>
+        <label class="block text-xs font-mono mb-1.5 text-white/40">STREAM NAME</label>
+        <input id="f-name" class="field" type="text" placeholder="যেমন: Lofi Chill 24/7" autocomplete="off"/>
+      </div>
+
+      <!-- ── Video Upload Section ── -->
+      <div>
+        <label class="block text-xs font-mono mb-1.5 text-white/40">ভিডিও সোর্স</label>
+
+        <!-- Tab switch -->
+        <div class="flex gap-1 mb-3 p-1 rounded-lg" style="background:var(--s700);">
+          <button id="tab-upload" onclick="setTab('upload')"
+                  class="flex-1 text-xs font-mono py-1.5 rounded-md transition-all"
+                  style="background:var(--s500);color:#e2e2f0;">
+            📁 গ্যালারি থেকে আপলোড
+          </button>
+          <button id="tab-url" onclick="setTab('url')"
+                  class="flex-1 text-xs font-mono py-1.5 rounded-md transition-all"
+                  style="color:rgba(255,255,255,.4);">
+            🔗 Direct URL
+          </button>
+        </div>
+
+        <!-- Upload pane -->
+        <div id="pane-upload">
+          <div class="dropzone" id="dropzone" ondragover="onDrag(event,true)"
+               ondragleave="onDrag(event,false)" ondrop="onDrop(event)">
+            <input type="file" id="f-file" accept="video/*,.mp4,.mkv,.mov,.avi,.webm,.ts"
+                   onchange="onFileChosen(this)"/>
+            <div id="dz-idle">
+              <svg class="w-10 h-10 mx-auto mb-2" style="color:rgba(255,60,60,.5);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+              </svg>
+              <p class="text-sm text-white/60 font-mono">ভিডিও ড্র্যাগ করুন অথবা <span style="color:#ff6060;">ক্লিক করুন</span></p>
+              <p class="text-xs text-white/30 font-mono mt-1">MP4, MKV, MOV, AVI, WEBM • সর্বোচ্চ 4 GB</p>
+            </div>
+            <div id="dz-chosen" class="hidden">
+              <svg class="w-8 h-8 mx-auto mb-1.5" style="color:#4ade80;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+              <p id="dz-name" class="text-sm font-mono text-white/80 truncate px-4"></p>
+              <p id="dz-size" class="text-xs font-mono text-white/40 mt-0.5"></p>
+            </div>
+          </div>
+
+          <!-- Progress bar (hidden until upload starts) -->
+          <div id="prog-wrap" class="hidden mt-2">
+            <div class="flex justify-between mb-1">
+              <span class="text-xs font-mono text-white/40">আপলোড হচ্ছে…</span>
+              <span id="prog-pct" class="text-xs font-mono text-white/60">0%</span>
+            </div>
+            <div class="prog-wrap"><div id="prog-bar" class="prog-bar"></div></div>
+          </div>
+
+          <!-- Upload done info -->
+          <div id="upload-done" class="hidden mt-2 px-3 py-2 rounded-lg"
+               style="background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.25);">
+            <p class="text-xs font-mono text-green-400">✓ আপলোড সম্পন্ন — <span id="ud-name"></span></p>
+          </div>
+        </div>
+
+        <!-- URL pane -->
+        <div id="pane-url" class="hidden">
+          <input id="f-url" class="field font-mono" type="url"
+                 placeholder="https://example.com/video.mp4" autocomplete="off"/>
+          <p class="mt-1.5 text-xs font-mono text-white/25">
+            Google Drive: File → Share → Anyone → convert to direct link
+          </p>
+        </div>
+      </div>
+
+      <!-- Platform -->
+      <div>
+        <label class="block text-xs font-mono mb-1.5 text-white/40">PLATFORM</label>
+        <select id="f-platform" class="field" onchange="onPlatform()">
+          <option value="youtube">YouTube Live</option>
+          <option value="facebook">Facebook Live</option>
+          <option value="custom">Custom RTMP URL</option>
+        </select>
+      </div>
+
+      <!-- Stream Key -->
+      <div id="key-wrap">
+        <label class="block text-xs font-mono mb-1.5 text-white/40">STREAM KEY
+          <span class="text-white/25 normal-case"> (সার্ভারে সংরক্ষিত হয় না)</span>
+        </label>
+        <input id="f-key" class="field font-mono" type="password"
+               placeholder="xxxx-xxxx-xxxx-xxxx" autocomplete="off"/>
+      </div>
+
+      <!-- Custom RTMP -->
+      <div id="rtmp-wrap" class="hidden">
+        <label class="block text-xs font-mono mb-1.5 text-white/40">CUSTOM RTMP URL</label>
+        <input id="f-rtmp" class="field font-mono" type="url"
+               placeholder="rtmp://live.example.com/live/your-key" autocomplete="off"/>
+      </div>
+
+      <!-- Quality (collapsible) -->
+      <div class="rounded-xl p-4 space-y-3" style="background:var(--s700);border:1px solid rgba(255,255,255,.05);">
+        <div class="flex items-center justify-between cursor-pointer" onclick="toggleQ()">
+          <span class="text-xs font-mono text-white/40">▸ কোয়ালিটি সেটিং</span>
+          <svg id="qarrow" class="w-4 h-4 text-white/25 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+        <div id="qbody" style="max-height:0;overflow:hidden;transition:max-height .3s ease;">
+          <div class="pt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-mono mb-1 text-white/35">রেজোলিউশন</label>
+              <select id="f-res" class="field">
+                <option value="1920x1080">1080p</option>
+                <option value="1280x720" selected>720p</option>
+                <option value="854x480">480p</option>
+                <option value="640x360">360p</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-mono mb-1 text-white/35">ভিডিও Bitrate</label>
+              <select id="f-vbr" class="field">
+                <option value="4500k">4500k (1080p)</option>
+                <option value="2500k" selected>2500k (720p)</option>
+                <option value="1200k">1200k (480p)</option>
+                <option value="600k">600k (360p)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-mono mb-1 text-white/35">অডিও Bitrate</label>
+              <select id="f-abr" class="field">
+                <option value="192k">192k</option>
+                <option value="128k" selected>128k</option>
+                <option value="96k">96k</option>
+              </select>
+            </div>
+            <div class="flex items-end pb-1">
+              <label class="tgl-wrap">
+                <input type="checkbox" id="f-loop" class="tgl-in" checked/>
+                <span class="tgl-track"><span class="tgl-thumb"></span></span>
+                <span class="text-xs font-mono text-white/40">LOOP ∞</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Submit -->
+      <button id="submit-btn" class="btn-red w-full py-3 text-sm flex items-center justify-center gap-2"
+              onclick="submitStream()">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span id="submit-label">Stream শুরু করুন</span>
+      </button>
+
+    </div><!-- /modal body -->
+  </div>
+</div>
+
+<!-- ── JS ────────────────────────────────────────────────────────────────── -->
+<script>
+'use strict';
+
+// ─── State ───────────────────────────────────────────────────────────────────
+const S = {
+  streams:   {},
+  evtSrc:    {},
+  uptimer:   {},
+  videoPath: null,  // server-side path after upload
+  fileName:  null,
+  tabMode:   'upload',
+};
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  checkHealth();
+  fetchStreams();
+  setInterval(fetchStreams, 8000);
+  setInterval(checkHealth, 30000);
+});
+
+// ─── Health ───────────────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const d = await fetch('/api/health').then(r => r.json());
+    document.getElementById('hpill').classList.remove('hidden');
+    const dot  = document.getElementById('hdot');
+    const text = document.getElementById('htext');
+    if (d.ffmpeg) {
+      dot.style.color  = '#4ade80';
+      text.textContent = 'FFmpeg OK';
+      text.style.color = '#86efac';
+    } else {
+      dot.style.color  = '#ff6060';
+      text.textContent = 'FFmpeg ❌';
+      text.style.color = '#fca5a5';
+    }
+  } catch {}
+}
+
+// ─── Streams ──────────────────────────────────────────────────────────────────
+async function fetchStreams() {
+  try {
+    const data = await fetch('/api/streams').then(r => r.json());
+    reconcile(data);
+  } catch {}
+}
+
+function reconcile(fresh) {
+  for (const [id, info] of Object.entries(fresh)) {
+    S.streams[id] = info;
+    if (!document.getElementById('card-' + id)) {
+      renderCard(info);
+      attachSSE(id);
+    } else {
+      updateCard(info);
+    }
+  }
+  for (const id of Object.keys(S.streams)) {
+    if (!fresh[id]) removeCard(id);
+  }
+  const n = Object.keys(S.streams).length;
+  document.getElementById('empty').classList.toggle('hidden', n > 0);
+  document.getElementById('grid').classList.toggle('hidden', n === 0);
+
+  const active = Object.values(S.streams).filter(s => s.status === 'online').length;
+  const chip   = document.getElementById('livechip');
+  if (active > 0) {
+    chip.classList.remove('hidden');
+    document.getElementById('livecount').textContent = active;
+  } else {
+    chip.classList.add('hidden');
+  }
+}
+
+// ─── Card ─────────────────────────────────────────────────────────────────────
+function renderCard(info) {
+  const grid = document.getElementById('grid');
+  const div  = document.createElement('div');
+  div.id        = 'card-' + info.id;
+  div.className = 'scard ' + (info.status === 'online' ? 'online' : '');
+  div.innerHTML = cardHTML(info);
+  grid.appendChild(div);
+  startTimer(info.id, info.status, info.uptime);
+}
+
+function updateCard(info) {
+  const card = document.getElementById('card-' + info.id);
+  if (!card) { renderCard(info); return; }
+
+  card.className = 'scard ' + (info.status === 'online' ? 'online' : '');
+
+  const badge = card.querySelector('.sbadge');
+  if (badge) {
+    badge.className = 'sbadge inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium ' +
+                      (info.status === 'online' ? 'badge-on' : 'badge-off');
+    badge.querySelector('.sdot').className = 'sdot w-2 h-2 rounded-full flex-shrink-0 ' +
+                                             (info.status === 'online' ? 'dot-on' : 'dot-off');
+    badge.querySelector('.slabel').textContent = info.status.toUpperCase();
+  }
+
+  const stopBtn    = card.querySelector('.stop-btn');
+  const restartBtn = card.querySelector('.restart-btn');
+  if (stopBtn)    stopBtn.classList.toggle('hidden',    info.status !== 'online');
+  if (restartBtn) restartBtn.classList.toggle('hidden', info.status === 'online');
+
+  if (info.status !== 'online') {
+    const uv = card.querySelector('.uptime-val');
+    if (uv) uv.textContent = '—';
+  }
+  startTimer(info.id, info.status, info.uptime);
+}
+
+function removeCard(id) {
+  clearInterval(S.uptimer[id]);
+  delete S.uptimer[id];
+  if (S.evtSrc[id]) { S.evtSrc[id].close(); delete S.evtSrc[id]; }
+  const c = document.getElementById('card-' + id);
+  if (c) c.remove();
+  delete S.streams[id];
+}
+
+function cardHTML(info) {
+  const on = info.status === 'online';
+  return `
+  <div class="p-4 flex flex-col gap-0">
+    <div class="flex items-start justify-between gap-3 mb-3">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h3 class="font-display font-bold text-white text-sm truncate">${esc(info.name)}</h3>
+          <span class="sbadge inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium ${on?'badge-on':'badge-off'}">
+            <span class="sdot w-2 h-2 rounded-full flex-shrink-0 ${on?'dot-on':'dot-off'}"></span>
+            <span class="slabel">${info.status.toUpperCase()}</span>
+          </span>
+        </div>
+        ${info.filename ? `<div class="mt-0.5 text-xs font-mono text-white/25 truncate">📹 ${esc(info.filename)}</div>` : ''}
+        ${info.rtmp_url ? `<div class="text-xs font-mono text-white/20 truncate mt-0.5" title="${esc(info.rtmp_url)}">⬡ ${trunc(info.rtmp_url,50)}</div>` : ''}
+      </div>
+      <button onclick="delStream('${info.id}')" class="btn-del flex-shrink-0">✕</button>
+    </div>
+
+    <div class="flex flex-wrap gap-1.5 mb-3">
+      ${pill(info.resolution||'—')}
+      ${pill((info.video_bitrate||'—')+' vid')}
+      ${pill((info.audio_bitrate||'—')+' aud')}
+      ${pill(info.loop?'∞ LOOP':'1× PLAY')}
+    </div>
+
+    <hr class="rule mb-3"/>
+
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-xs font-mono text-white/30">UPTIME</span>
+      <span class="uptime uptime-val text-white">${on ? fmt(info.uptime||0) : '—'}</span>
+    </div>
+
+    <div class="flex items-center gap-2 mb-3">
+      <button class="stop-btn btn-stop flex-1 flex items-center justify-center gap-1.5 text-sm ${on?'':'hidden'}"
+              onclick="stopStream('${info.id}')">
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+          <rect x="5" y="5" width="10" height="10" rx="1"/>
+        </svg>
+        স্ট্রিম বন্ধ করুন
+      </button>
+      <button class="restart-btn btn-ghost flex-1 flex items-center justify-center gap-1.5 text-sm ${on?'hidden':''}"
+              onclick="openModal()">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        নতুন কনফিগার
+      </button>
+      <button class="btn-ghost px-3 py-2" onclick="toggleLog('${info.id}')" title="Logs">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+      </button>
+    </div>
+
+    <div id="logwrap-${info.id}" class="hidden">
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="text-xs font-mono text-white/25">FFmpeg Output</span>
+        <button onclick="clearLog('${info.id}')"
+                class="text-xs font-mono px-2 py-0.5 rounded text-white/25 hover:text-white/50"
+                style="background:var(--s600);">clear</button>
+      </div>
+      <div id="log-${info.id}" class="log-terminal">
+        <span class="text-white/20">── আউটপুটের জন্য অপেক্ষা করছে… ──</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+function pill(t) { return `<span class="mpill">${esc(t)}</span>`; }
+
+// ─── Uptime ───────────────────────────────────────────────────────────────────
+function startTimer(id, status, init) {
+  clearInterval(S.uptimer[id]);
+  if (status !== 'online') return;
+  let s = init || 0;
+  S.uptimer[id] = setInterval(() => {
+    s++;
+    const el = document.querySelector(`#card-${id} .uptime-val`);
+    if (el) el.textContent = fmt(s);
+  }, 1000);
+}
+function fmt(s) {
+  if (s < 60)   return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm ' + (s%60) + 's';
+}
+
+// ─── SSE Logs ─────────────────────────────────────────────────────────────────
+function attachSSE(id) {
+  if (S.evtSrc[id]) S.evtSrc[id].close();
+  const es = new EventSource(`/api/streams/${id}/events`);
+  S.evtSrc[id] = es;
+  es.onmessage = e => { if (e.data) appendLog(id, e.data); };
+}
+
+function appendLog(id, line) {
+  const el = document.getElementById('log-' + id);
+  if (!el) return;
+  const ph = el.querySelector('span.text-white\\/20');
+  if (ph) ph.remove();
+  const d = document.createElement('div');
+  d.textContent = line;
+  if (/error|fail|invalid/i.test(line)) d.style.color = '#fca5a5';
+  else if (/warn/i.test(line))          d.style.color = '#fde68a';
+  else if (/frame=|fps=|bitrate=/i.test(line)) d.style.color = '#93c5fd';
+  el.appendChild(d);
+  while (el.children.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+function toggleLog(id) {
+  document.getElementById('logwrap-' + id)?.classList.toggle('hidden');
+}
+function clearLog(id) {
+  const el = document.getElementById('log-' + id);
+  if (el) el.innerHTML = '<span class="text-white/20">── cleared ──</span>';
+}
+
+// ─── Actions ──────────────────────────────────────────────────────────────────
+async function stopStream(id) {
+  try {
+    const r = await fetch(`/api/streams/${id}/stop`, {method:'POST'});
+    if (!r.ok) throw new Error((await r.json()).error);
+    toast('Stream বন্ধ হয়েছে', 'inf'); fetchStreams();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function delStream(id) {
+  if (!confirm('এই slot মুছে ফেলবেন?')) return;
+  await fetch(`/api/streams/${id}`, {method:'DELETE'});
+  removeCard(id);
+  reconcile(S.streams);
+  toast('মুছে ফেলা হয়েছে', 'inf');
+}
+
+// ─── Upload ───────────────────────────────────────────────────────────────────
+function onDrag(e, active) {
+  e.preventDefault();
+  document.getElementById('dropzone').classList.toggle('drag', active);
+}
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropzone').classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+}
+function onFileChosen(inp) {
+  if (inp.files[0]) handleFile(inp.files[0]);
+}
+
+function handleFile(file) {
+  S.videoPath = null;
+  S.fileName  = file.name;
+  const MB = (file.size / 1048576).toFixed(1);
+  document.getElementById('dz-idle').classList.add('hidden');
+  document.getElementById('dz-chosen').classList.remove('hidden');
+  document.getElementById('dz-name').textContent = file.name;
+  document.getElementById('dz-size').textContent = MB + ' MB';
+  document.getElementById('upload-done').classList.add('hidden');
+  // Store file ref for later upload-on-submit
+  S._pendingFile = file;
+}
+
+async function uploadFile(file) {
+  const fd = new FormData();
+  fd.append('video', file);
+
+  document.getElementById('prog-wrap').classList.remove('hidden');
+  document.getElementById('submit-btn').disabled = true;
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload');
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) {
+        const pct = Math.round(e.loaded / e.total * 100);
+        document.getElementById('prog-bar').style.width = pct + '%';
+        document.getElementById('prog-pct').textContent = pct + '%';
+      }
+    };
+    xhr.onload = () => {
+      document.getElementById('prog-wrap').classList.add('hidden');
+      document.getElementById('submit-btn').disabled = false;
+      if (xhr.status === 200) {
+        const d = JSON.parse(xhr.responseText);
+        document.getElementById('upload-done').classList.remove('hidden');
+        document.getElementById('ud-name').textContent = d.filename + ' (' + d.size_mb + ' MB)';
+        resolve(d);
+      } else {
+        try { reject(new Error(JSON.parse(xhr.responseText).error)); }
+        catch { reject(new Error('আপলোড ব্যর্থ হয়েছে')); }
+      }
+    };
+    xhr.onerror = () => {
+      document.getElementById('prog-wrap').classList.add('hidden');
+      document.getElementById('submit-btn').disabled = false;
+      reject(new Error('নেটওয়ার্ক এরর'));
+    };
+    xhr.send(fd);
+  });
+}
+
+// ─── Submit ───────────────────────────────────────────────────────────────────
+async function submitStream() {
+  const btn   = document.getElementById('submit-btn');
+  const label = document.getElementById('submit-label');
+  const name  = document.getElementById('f-name').value.trim();
+  const platform  = document.getElementById('f-platform').value;
+  const streamKey = document.getElementById('f-key').value.trim();
+  const customRtmp= document.getElementById('f-rtmp').value.trim();
+  const res   = document.getElementById('f-res').value;
+  const vbr   = document.getElementById('f-vbr').value;
+  const abr   = document.getElementById('f-abr').value;
+  const loop  = document.getElementById('f-loop').checked;
+
+  // Validate platform creds
+  if (platform !== 'custom' && !streamKey) { toast('Stream key দিন', 'err'); return; }
+  if (platform === 'custom' && !customRtmp) { toast('RTMP URL দিন', 'err'); return; }
+
+  // Get video path
+  let videoPath = null;
+  let fileName  = null;
+
+  if (S.tabMode === 'upload') {
+    if (!S._pendingFile && !S.videoPath) { toast('ভিডিও সিলেক্ট করুন', 'err'); return; }
+    if (S._pendingFile && !S.videoPath) {
+      // Need to upload first
+      label.textContent = 'আপলোড হচ্ছে…';
+      btn.disabled = true;
+      try {
+        const uploaded = await uploadFile(S._pendingFile);
+        S.videoPath  = uploaded.path;
+        S.fileName   = uploaded.filename;
+        S._pendingFile = null;
+      } catch (e) {
+        toast(e.message, 'err');
+        btn.disabled = false;
+        label.textContent = 'Stream শুরু করুন';
+        return;
+      }
+    }
+    videoPath = S.videoPath;
+    fileName  = S.fileName;
+  } else {
+    videoPath = document.getElementById('f-url').value.trim();
+    if (!videoPath) { toast('URL দিন', 'err'); return; }
+    fileName = videoPath.split('/').pop();
+  }
+
+  // Start stream
+  label.textContent = 'শুরু হচ্ছে…';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch('/api/streams', {
+      method:  'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name:          name || 'Stream Slot',
+        video_path:    videoPath,
+        filename:      fileName,
+        platform,
+        stream_key:    streamKey,
+        custom_rtmp:   customRtmp,
+        resolution:    res,
+        video_bitrate: vbr,
+        audio_bitrate: abr,
+        loop,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    toast(`"${d.name}" এখন LIVE!`, 'ok');
+    closeModal();
+    fetchStreams();
+  } catch (e) {
+    toast(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    label.textContent = 'Stream শুরু করুন';
+  }
+}
+
+// ─── Modal helpers ────────────────────────────────────────────────────────────
+function openModal() {
+  document.getElementById('overlay').classList.remove('hidden');
+}
+function closeModal() {
+  document.getElementById('overlay').classList.add('hidden');
+  resetModal();
+}
+function maybeClose(e) {
+  if (e.target === document.getElementById('overlay')) closeModal();
+}
+function resetModal() {
+  ['f-name','f-url','f-key','f-rtmp'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('f-platform').value = 'youtube';
+  document.getElementById('f-res').value  = '1280x720';
+  document.getElementById('f-vbr').value  = '2500k';
+  document.getElementById('f-abr').value  = '128k';
+  document.getElementById('f-loop').checked = true;
+  S.videoPath = null; S.fileName = null; S._pendingFile = null;
+  document.getElementById('dz-idle').classList.remove('hidden');
+  document.getElementById('dz-chosen').classList.add('hidden');
+  document.getElementById('upload-done').classList.add('hidden');
+  document.getElementById('prog-wrap').classList.add('hidden');
+  document.getElementById('prog-bar').style.width = '0%';
+  onPlatform();
+  setTab('upload');
+}
+
+function setTab(tab) {
+  S.tabMode = tab;
+  const pU = document.getElementById('pane-upload');
+  const pR = document.getElementById('pane-url');
+  const tU = document.getElementById('tab-upload');
+  const tR = document.getElementById('tab-url');
+  if (tab === 'upload') {
+    pU.classList.remove('hidden'); pR.classList.add('hidden');
+    tU.style.background = 'var(--s500)'; tU.style.color = '#e2e2f0';
+    tR.style.background = 'transparent'; tR.style.color = 'rgba(255,255,255,.4)';
+  } else {
+    pR.classList.remove('hidden'); pU.classList.add('hidden');
+    tR.style.background = 'var(--s500)'; tR.style.color = '#e2e2f0';
+    tU.style.background = 'transparent'; tU.style.color = 'rgba(255,255,255,.4)';
+  }
+}
+
+function onPlatform() {
+  const p = document.getElementById('f-platform').value;
+  document.getElementById('key-wrap').classList.toggle('hidden', p === 'custom');
+  document.getElementById('rtmp-wrap').classList.toggle('hidden', p !== 'custom');
+}
+
+let qOpen = false;
+function toggleQ() {
+  qOpen = !qOpen;
+  const b = document.getElementById('qbody');
+  b.style.maxHeight = qOpen ? b.scrollHeight + 'px' : '0';
+  document.getElementById('qarrow').style.transform = qOpen ? 'rotate(180deg)' : '';
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function toast(msg, type = 'inf') {
+  const c  = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className   = 'toast ' + type;
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity .3s';
+                     setTimeout(()=>el.remove(),300); }, 4000);
+}
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function trunc(s, n) { return s.length<=n ? s : s.slice(0,n)+'…'; }
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+});
+</script>
+</body>
+</html>
